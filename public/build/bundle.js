@@ -61,9 +61,19 @@ var app = (function () {
     function space() {
         return text(' ');
     }
+    function empty() {
+        return text('');
+    }
     function listen(node, event, handler, options) {
         node.addEventListener(event, handler, options);
         return () => node.removeEventListener(event, handler, options);
+    }
+    function prevent_default(fn) {
+        return function (event) {
+            event.preventDefault();
+            // @ts-ignore
+            return fn.call(this, event);
+        };
     }
     function attr(node, attribute, value) {
         if (value == null)
@@ -76,6 +86,9 @@ var app = (function () {
     }
     function set_input_value(input, value) {
         input.value = value == null ? '' : value;
+    }
+    function toggle_class(element, name, toggle) {
+        element.classList[toggle ? 'add' : 'remove'](name);
     }
     function custom_event(type, detail, { bubbles = false, cancelable = false } = {}) {
         const e = document.createEvent('CustomEvent');
@@ -195,6 +208,19 @@ var app = (function () {
     }
     const outroing = new Set();
     let outros;
+    function group_outros() {
+        outros = {
+            r: 0,
+            c: [],
+            p: outros // parent group
+        };
+    }
+    function check_outros() {
+        if (!outros.r) {
+            run_all(outros.c);
+        }
+        outros = outros.p;
+    }
     function transition_in(block, local) {
         if (block && block.i) {
             outroing.delete(block);
@@ -218,6 +244,99 @@ var app = (function () {
         }
         else if (callback) {
             callback();
+        }
+    }
+    function outro_and_destroy_block(block, lookup) {
+        transition_out(block, 1, 1, () => {
+            lookup.delete(block.key);
+        });
+    }
+    function update_keyed_each(old_blocks, dirty, get_key, dynamic, ctx, list, lookup, node, destroy, create_each_block, next, get_context) {
+        let o = old_blocks.length;
+        let n = list.length;
+        let i = o;
+        const old_indexes = {};
+        while (i--)
+            old_indexes[old_blocks[i].key] = i;
+        const new_blocks = [];
+        const new_lookup = new Map();
+        const deltas = new Map();
+        const updates = [];
+        i = n;
+        while (i--) {
+            const child_ctx = get_context(ctx, list, i);
+            const key = get_key(child_ctx);
+            let block = lookup.get(key);
+            if (!block) {
+                block = create_each_block(key, child_ctx);
+                block.c();
+            }
+            else if (dynamic) {
+                // defer updates until all the DOM shuffling is done
+                updates.push(() => block.p(child_ctx, dirty));
+            }
+            new_lookup.set(key, new_blocks[i] = block);
+            if (key in old_indexes)
+                deltas.set(key, Math.abs(i - old_indexes[key]));
+        }
+        const will_move = new Set();
+        const did_move = new Set();
+        function insert(block) {
+            transition_in(block, 1);
+            block.m(node, next);
+            lookup.set(block.key, block);
+            next = block.first;
+            n--;
+        }
+        while (o && n) {
+            const new_block = new_blocks[n - 1];
+            const old_block = old_blocks[o - 1];
+            const new_key = new_block.key;
+            const old_key = old_block.key;
+            if (new_block === old_block) {
+                // do nothing
+                next = new_block.first;
+                o--;
+                n--;
+            }
+            else if (!new_lookup.has(old_key)) {
+                // remove old block
+                destroy(old_block, lookup);
+                o--;
+            }
+            else if (!lookup.has(new_key) || will_move.has(new_key)) {
+                insert(new_block);
+            }
+            else if (did_move.has(old_key)) {
+                o--;
+            }
+            else if (deltas.get(new_key) > deltas.get(old_key)) {
+                did_move.add(new_key);
+                insert(new_block);
+            }
+            else {
+                will_move.add(old_key);
+                o--;
+            }
+        }
+        while (o--) {
+            const old_block = old_blocks[o];
+            if (!new_lookup.has(old_block.key))
+                destroy(old_block, lookup);
+        }
+        while (n)
+            insert(new_blocks[n - 1]);
+        run_all(updates);
+        return new_blocks;
+    }
+    function validate_each_keys(ctx, list, get_context, get_key) {
+        const keys = new Set();
+        for (let i = 0; i < list.length; i++) {
+            const key = get_key(get_context(ctx, list, i));
+            if (keys.has(key)) {
+                throw new Error('Cannot have duplicate keys in a keyed each');
+            }
+            keys.add(key);
         }
     }
     function create_component(block) {
@@ -400,6 +519,15 @@ var app = (function () {
         dispatch_dev('SvelteDOMSetData', { node: text, data });
         text.data = data;
     }
+    function validate_each_argument(arg) {
+        if (typeof arg !== 'string' && !(arg && typeof arg === 'object' && 'length' in arg)) {
+            let msg = '{#each} only iterates over array-like objects.';
+            if (typeof Symbol === 'function' && arg && Symbol.iterator in arg) {
+                msg += ' You can use a spread to convert this iterable into an array.';
+            }
+            throw new Error(msg);
+        }
+    }
     function validate_slots(name, slot, keys) {
         for (const slot_key of Object.keys(slot)) {
             if (!~keys.indexOf(slot_key)) {
@@ -443,12 +571,13 @@ var app = (function () {
     	let h1;
     	let t1;
     	let t2;
-    	let h2;
     	let t3;
     	let t4;
+    	let h2;
+    	let t5;
+    	let t6;
     	let div2;
     	let p;
-    	let t5;
 
     	const block = {
     		c: function create() {
@@ -460,32 +589,34 @@ var app = (function () {
     			div1 = element("div");
     			h1 = element("h1");
     			t1 = text(/*userName*/ ctx[0]);
-    			t2 = space();
-    			h2 = element("h2");
-    			t3 = text(/*jobTitle*/ ctx[1]);
+    			t2 = text(" / ");
+    			t3 = text(/*initialName*/ ctx[4]);
     			t4 = space();
+    			h2 = element("h2");
+    			t5 = text(/*jobTitle*/ ctx[1]);
+    			t6 = space();
     			div2 = element("div");
     			p = element("p");
-    			t5 = text(/*description*/ ctx[2]);
     			if (!src_url_equal(img.src, img_src_value = /*userImage*/ ctx[3])) attr_dev(img, "src", img_src_value);
     			attr_dev(img, "alt", /*userName*/ ctx[0]);
     			attr_dev(img, "class", "svelte-1ttxwg3");
-    			add_location(img, file$1, 63, 6, 1090);
+    			add_location(img, file$1, 12, 6, 316);
     			attr_dev(div0, "class", "thumb svelte-1ttxwg3");
-    			add_location(div0, file$1, 62, 4, 1064);
+    			toggle_class(div0, "test", /*userImage*/ ctx[3]);
+    			add_location(div0, file$1, 11, 4, 267);
     			attr_dev(h1, "class", "svelte-1ttxwg3");
-    			add_location(h1, file$1, 66, 6, 1178);
+    			add_location(h1, file$1, 15, 6, 400);
     			attr_dev(h2, "class", "svelte-1ttxwg3");
-    			add_location(h2, file$1, 67, 6, 1204);
+    			add_location(h2, file$1, 16, 6, 442);
     			attr_dev(div1, "class", "user-data svelte-1ttxwg3");
-    			add_location(div1, file$1, 65, 4, 1148);
+    			add_location(div1, file$1, 14, 4, 370);
     			attr_dev(header, "class", "svelte-1ttxwg3");
-    			add_location(header, file$1, 61, 2, 1051);
-    			add_location(p, file$1, 71, 4, 1279);
+    			add_location(header, file$1, 10, 2, 254);
+    			add_location(p, file$1, 20, 4, 517);
     			attr_dev(div2, "class", "description svelte-1ttxwg3");
-    			add_location(div2, file$1, 70, 2, 1249);
+    			add_location(div2, file$1, 19, 2, 487);
     			attr_dev(div3, "class", "contact-card svelte-1ttxwg3");
-    			add_location(div3, file$1, 60, 0, 1022);
+    			add_location(div3, file$1, 9, 0, 225);
     		},
     		l: function claim(nodes) {
     			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
@@ -499,13 +630,15 @@ var app = (function () {
     			append_dev(header, div1);
     			append_dev(div1, h1);
     			append_dev(h1, t1);
-    			append_dev(div1, t2);
+    			append_dev(h1, t2);
+    			append_dev(h1, t3);
+    			append_dev(div1, t4);
     			append_dev(div1, h2);
-    			append_dev(h2, t3);
-    			append_dev(div3, t4);
+    			append_dev(h2, t5);
+    			append_dev(div3, t6);
     			append_dev(div3, div2);
     			append_dev(div2, p);
-    			append_dev(p, t5);
+    			p.innerHTML = /*description*/ ctx[2];
     		},
     		p: function update(ctx, [dirty]) {
     			if (dirty & /*userImage*/ 8 && !src_url_equal(img.src, img_src_value = /*userImage*/ ctx[3])) {
@@ -516,10 +649,13 @@ var app = (function () {
     				attr_dev(img, "alt", /*userName*/ ctx[0]);
     			}
 
+    			if (dirty & /*userImage*/ 8) {
+    				toggle_class(div0, "test", /*userImage*/ ctx[3]);
+    			}
+
     			if (dirty & /*userName*/ 1) set_data_dev(t1, /*userName*/ ctx[0]);
-    			if (dirty & /*jobTitle*/ 2) set_data_dev(t3, /*jobTitle*/ ctx[1]);
-    			if (dirty & /*description*/ 4) set_data_dev(t5, /*description*/ ctx[2]);
-    		},
+    			if (dirty & /*jobTitle*/ 2) set_data_dev(t5, /*jobTitle*/ ctx[1]);
+    			if (dirty & /*description*/ 4) p.innerHTML = /*description*/ ctx[2];		},
     		i: noop,
     		o: noop,
     		d: function destroy(detaching) {
@@ -545,6 +681,7 @@ var app = (function () {
     	let { jobTitle } = $$props;
     	let { description } = $$props;
     	let { userImage } = $$props;
+    	const initialName = userName;
 
     	$$self.$$.on_mount.push(function () {
     		if (userName === undefined && !('userName' in $$props || $$self.$$.bound[$$self.$$.props['userName']])) {
@@ -581,7 +718,8 @@ var app = (function () {
     		userName,
     		jobTitle,
     		description,
-    		userImage
+    		userImage,
+    		initialName
     	});
 
     	$$self.$inject_state = $$props => {
@@ -601,7 +739,7 @@ var app = (function () {
     		}
     	};
 
-    	return [userName, jobTitle, description, userImage];
+    	return [userName, jobTitle, description, userImage, initialName];
     }
 
     class ContactCard extends SvelteComponentDev {
@@ -661,152 +799,151 @@ var app = (function () {
     const { console: console_1 } = globals;
     const file = "src/App.svelte";
 
-    function create_fragment(ctx) {
-    	let h1;
+    function get_each_context(ctx, list, i) {
+    	const child_ctx = ctx.slice();
+    	child_ctx[17] = list[i];
+    	child_ctx[19] = i;
+    	return child_ctx;
+    }
+
+    // (116:32) 
+    function create_if_block_1(ctx) {
+    	let p;
+
+    	const block = {
+    		c: function create() {
+    			p = element("p");
+    			p.textContent = "enter valid data and submit";
+    			attr_dev(p, "class", "my-2 font-semibold text-red-500 font-xs");
+    			add_location(p, file, 116, 2, 2977);
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, p, anchor);
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(p);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_if_block_1.name,
+    		type: "if",
+    		source: "(116:32) ",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    // (114:0) {#if formState === "invalid"}
+    function create_if_block(ctx) {
+    	let p;
+
+    	const block = {
+    		c: function create() {
+    			p = element("p");
+    			p.textContent = "invalid input";
+    			attr_dev(p, "class", "my-2 font-semibold text-red-500 font-xs");
+    			add_location(p, file, 114, 2, 2873);
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, p, anchor);
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(p);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_if_block.name,
+    		type: "if",
+    		source: "(114:0) {#if formState === \\\"invalid\\\"}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    // (129:0) {:else}
+    function create_else_block(ctx) {
+    	let p;
+
+    	const block = {
+    		c: function create() {
+    			p = element("p");
+    			p.textContent = "Please start adding some contacts, we found none!";
+    			add_location(p, file, 129, 2, 3321);
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, p, anchor);
+    		},
+    		p: noop,
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(p);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_else_block.name,
+    		type: "else",
+    		source: "(129:0) {:else}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    // (121:0) {#each createdContacts as contact, index (contact.id)}
+    function create_each_block(key_1, ctx) {
+    	let h2;
     	let t0;
+    	let t1_value = /*index*/ ctx[19] + 1 + "";
     	let t1;
     	let t2;
-    	let t3;
-    	let t4;
-    	let button;
-    	let t6;
-    	let div;
-    	let form;
-    	let input0;
-    	let t7;
-    	let input1;
-    	let t8;
-    	let input2;
-    	let t9;
-    	let textarea;
-    	let t10;
     	let contactcard;
     	let current;
-    	let mounted;
-    	let dispose;
 
     	contactcard = new ContactCard({
     			props: {
-    				userName: /*name*/ ctx[0],
-    				jobTitle: /*jobTitle*/ ctx[1],
-    				description: /*description*/ ctx[2],
-    				userImage: /*userImage*/ ctx[4]
+    				userName: `${/*contact*/ ctx[17].name} `,
+    				jobTitle: /*contact*/ ctx[17].jobTitle,
+    				description: /*contact*/ ctx[17].description,
+    				userImage: /*contact*/ ctx[17].userImage
     			},
     			$$inline: true
     		});
 
     	const block = {
+    		key: key_1,
+    		first: null,
     		c: function create() {
-    			h1 = element("h1");
-    			t0 = text("Hello my name is ");
-    			t1 = text(/*upperName*/ ctx[5]);
-    			t2 = text("! and my age is ");
-    			t3 = text(/*age*/ ctx[3]);
-    			t4 = space();
-    			button = element("button");
-    			button.textContent = "change Age";
-    			t6 = space();
-    			div = element("div");
-    			form = element("form");
-    			input0 = element("input");
-    			t7 = space();
-    			input1 = element("input");
-    			t8 = space();
-    			input2 = element("input");
-    			t9 = space();
-    			textarea = element("textarea");
-    			t10 = space();
+    			h2 = element("h2");
+    			t0 = text("#");
+    			t1 = text(t1_value);
+    			t2 = space();
     			create_component(contactcard.$$.fragment);
-    			add_location(h1, file, 568, 0, 12268);
-    			attr_dev(button, "class", "p-2 text-white bg-pink-500 border-none outline-none");
-    			add_location(button, file, 569, 0, 12327);
-    			attr_dev(input0, "type", "text");
-    			attr_dev(input0, "placeholder", "name");
-    			attr_dev(input0, "class", "px-5 py-2 border rounded-md ");
-    			add_location(input0, file, 574, 0, 12641);
-    			attr_dev(input1, "type", "text");
-    			attr_dev(input1, "placeholder", "jobTitle");
-    			attr_dev(input1, "class", "px-5 py-2 border rounded-md ");
-    			add_location(input1, file, 575, 0, 12737);
-    			attr_dev(input2, "type", "text");
-    			attr_dev(input2, "placeholder", "choose a photo");
-    			attr_dev(input2, "class", "px-5 py-2 border rounded-md ");
-    			add_location(input2, file, 576, 0, 12841);
-    			attr_dev(textarea, "type", "text");
-    			attr_dev(textarea, "placeholder", "description");
-    			attr_dev(textarea, "class", "px-5 py-2 border rounded-md ");
-    			add_location(textarea, file, 577, 0, 12952);
-    			attr_dev(form, "class", "flex flex-col w-full my-5 gap-y-5");
-    			add_location(form, file, 573, 0, 12592);
-    			attr_dev(div, "class", "w-1/2");
-    			add_location(div, file, 572, 0, 12572);
-    		},
-    		l: function claim(nodes) {
-    			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+    			add_location(h2, file, 121, 2, 3131);
+    			this.first = h2;
     		},
     		m: function mount(target, anchor) {
-    			insert_dev(target, h1, anchor);
-    			append_dev(h1, t0);
-    			append_dev(h1, t1);
-    			append_dev(h1, t2);
-    			append_dev(h1, t3);
-    			insert_dev(target, t4, anchor);
-    			insert_dev(target, button, anchor);
-    			insert_dev(target, t6, anchor);
-    			insert_dev(target, div, anchor);
-    			append_dev(div, form);
-    			append_dev(form, input0);
-    			set_input_value(input0, /*name*/ ctx[0]);
-    			append_dev(form, t7);
-    			append_dev(form, input1);
-    			set_input_value(input1, /*jobTitle*/ ctx[1]);
-    			append_dev(form, t8);
-    			append_dev(form, input2);
-    			set_input_value(input2, /*userImage*/ ctx[4]);
-    			append_dev(form, t9);
-    			append_dev(form, textarea);
-    			set_input_value(textarea, /*description*/ ctx[2]);
-    			insert_dev(target, t10, anchor);
+    			insert_dev(target, h2, anchor);
+    			append_dev(h2, t0);
+    			append_dev(h2, t1);
+    			insert_dev(target, t2, anchor);
     			mount_component(contactcard, target, anchor);
     			current = true;
-
-    			if (!mounted) {
-    				dispose = [
-    					listen_dev(button, "click", /*incrementAge*/ ctx[6], false, false, false, false),
-    					listen_dev(input0, "input", /*input0_input_handler*/ ctx[7]),
-    					listen_dev(input1, "input", /*input1_input_handler*/ ctx[8]),
-    					listen_dev(input2, "input", /*input2_input_handler*/ ctx[9]),
-    					listen_dev(textarea, "input", /*textarea_input_handler*/ ctx[10])
-    				];
-
-    				mounted = true;
-    			}
     		},
-    		p: function update(ctx, [dirty]) {
-    			if (!current || dirty & /*upperName*/ 32) set_data_dev(t1, /*upperName*/ ctx[5]);
-    			if (!current || dirty & /*age*/ 8) set_data_dev(t3, /*age*/ ctx[3]);
-
-    			if (dirty & /*name*/ 1 && input0.value !== /*name*/ ctx[0]) {
-    				set_input_value(input0, /*name*/ ctx[0]);
-    			}
-
-    			if (dirty & /*jobTitle*/ 2 && input1.value !== /*jobTitle*/ ctx[1]) {
-    				set_input_value(input1, /*jobTitle*/ ctx[1]);
-    			}
-
-    			if (dirty & /*userImage*/ 16 && input2.value !== /*userImage*/ ctx[4]) {
-    				set_input_value(input2, /*userImage*/ ctx[4]);
-    			}
-
-    			if (dirty & /*description*/ 4) {
-    				set_input_value(textarea, /*description*/ ctx[2]);
-    			}
-
+    		p: function update(new_ctx, dirty) {
+    			ctx = new_ctx;
+    			if ((!current || dirty & /*createdContacts*/ 32) && t1_value !== (t1_value = /*index*/ ctx[19] + 1 + "")) set_data_dev(t1, t1_value);
     			const contactcard_changes = {};
-    			if (dirty & /*name*/ 1) contactcard_changes.userName = /*name*/ ctx[0];
-    			if (dirty & /*jobTitle*/ 2) contactcard_changes.jobTitle = /*jobTitle*/ ctx[1];
-    			if (dirty & /*description*/ 4) contactcard_changes.description = /*description*/ ctx[2];
-    			if (dirty & /*userImage*/ 16) contactcard_changes.userImage = /*userImage*/ ctx[4];
+    			if (dirty & /*createdContacts*/ 32) contactcard_changes.userName = `${/*contact*/ ctx[17].name} `;
+    			if (dirty & /*createdContacts*/ 32) contactcard_changes.jobTitle = /*contact*/ ctx[17].jobTitle;
+    			if (dirty & /*createdContacts*/ 32) contactcard_changes.description = /*contact*/ ctx[17].description;
+    			if (dirty & /*createdContacts*/ 32) contactcard_changes.userImage = /*contact*/ ctx[17].userImage;
     			contactcard.$set(contactcard_changes);
     		},
     		i: function intro(local) {
@@ -819,13 +956,273 @@ var app = (function () {
     			current = false;
     		},
     		d: function destroy(detaching) {
-    			if (detaching) detach_dev(h1);
-    			if (detaching) detach_dev(t4);
-    			if (detaching) detach_dev(button);
-    			if (detaching) detach_dev(t6);
-    			if (detaching) detach_dev(div);
-    			if (detaching) detach_dev(t10);
+    			if (detaching) detach_dev(h2);
+    			if (detaching) detach_dev(t2);
     			destroy_component(contactcard, detaching);
+    		}
+    	};
+
+    	dispatch_dev("SvelteRegisterBlock", {
+    		block,
+    		id: create_each_block.name,
+    		type: "each",
+    		source: "(121:0) {#each createdContacts as contact, index (contact.id)}",
+    		ctx
+    	});
+
+    	return block;
+    }
+
+    function create_fragment(ctx) {
+    	let div1;
+    	let form;
+    	let input0;
+    	let t0;
+    	let input1;
+    	let t1;
+    	let input2;
+    	let t2;
+    	let textarea;
+    	let t3;
+    	let div0;
+    	let button0;
+    	let t5;
+    	let button1;
+    	let t7;
+    	let button2;
+    	let t9;
+    	let t10;
+    	let each_blocks = [];
+    	let each_1_lookup = new Map();
+    	let each_1_anchor;
+    	let current;
+    	let mounted;
+    	let dispose;
+
+    	function select_block_type(ctx, dirty) {
+    		if (/*formState*/ ctx[4] === "invalid") return create_if_block;
+    		if (/*formState*/ ctx[4] === "empty") return create_if_block_1;
+    	}
+
+    	let current_block_type = select_block_type(ctx);
+    	let if_block = current_block_type && current_block_type(ctx);
+    	let each_value = /*createdContacts*/ ctx[5];
+    	validate_each_argument(each_value);
+    	const get_key = ctx => /*contact*/ ctx[17].id;
+    	validate_each_keys(ctx, each_value, get_each_context, get_key);
+
+    	for (let i = 0; i < each_value.length; i += 1) {
+    		let child_ctx = get_each_context(ctx, each_value, i);
+    		let key = get_key(child_ctx);
+    		each_1_lookup.set(key, each_blocks[i] = create_each_block(key, child_ctx));
+    	}
+
+    	let each_1_else = null;
+
+    	if (!each_value.length) {
+    		each_1_else = create_else_block(ctx);
+    	}
+
+    	const block = {
+    		c: function create() {
+    			div1 = element("div");
+    			form = element("form");
+    			input0 = element("input");
+    			t0 = space();
+    			input1 = element("input");
+    			t1 = space();
+    			input2 = element("input");
+    			t2 = space();
+    			textarea = element("textarea");
+    			t3 = space();
+    			div0 = element("div");
+    			button0 = element("button");
+    			button0.textContent = "Add Contact card";
+    			t5 = space();
+    			button1 = element("button");
+    			button1.textContent = "Delete First";
+    			t7 = space();
+    			button2 = element("button");
+    			button2.textContent = "Delete last";
+    			t9 = space();
+    			if (if_block) if_block.c();
+    			t10 = space();
+
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].c();
+    			}
+
+    			each_1_anchor = empty();
+
+    			if (each_1_else) {
+    				each_1_else.c();
+    			}
+
+    			attr_dev(input0, "type", "text");
+    			attr_dev(input0, "placeholder", "name");
+    			attr_dev(input0, "class", "px-5 py-2 border rounded-md");
+    			add_location(input0, file, 67, 4, 1741);
+    			attr_dev(input1, "type", "text");
+    			attr_dev(input1, "placeholder", "jobTitle");
+    			attr_dev(input1, "class", "px-5 py-2 border rounded-md");
+    			add_location(input1, file, 73, 4, 1868);
+    			attr_dev(input2, "type", "text");
+    			attr_dev(input2, "placeholder", "choose a photo");
+    			attr_dev(input2, "class", "px-5 py-2 border rounded-md");
+    			add_location(input2, file, 79, 4, 2003);
+    			attr_dev(textarea, "type", "text");
+    			attr_dev(textarea, "placeholder", "description");
+    			attr_dev(textarea, "class", "px-5 py-2 border rounded-md");
+    			add_location(textarea, file, 85, 4, 2145);
+    			attr_dev(button0, "type", "submit");
+    			attr_dev(button0, "class", "p-2 text-white bg-pink-500 border-none outline-none");
+    			add_location(button0, file, 93, 6, 2323);
+    			attr_dev(button1, "class", "p-2 text-white bg-pink-500 border-none outline-none");
+    			add_location(button1, file, 99, 6, 2518);
+    			attr_dev(button2, "class", "p-2 text-white bg-pink-500 border-none outline-none");
+    			add_location(button2, file, 104, 6, 2669);
+    			attr_dev(div0, "class", "flex gap-x-5");
+    			add_location(div0, file, 92, 4, 2290);
+    			attr_dev(form, "class", "flex flex-col w-full my-5 gap-y-5");
+    			add_location(form, file, 66, 2, 1688);
+    			attr_dev(div1, "class", "w-1/2");
+    			add_location(div1, file, 65, 0, 1666);
+    		},
+    		l: function claim(nodes) {
+    			throw new Error("options.hydrate only works if the component was compiled with the `hydratable: true` option");
+    		},
+    		m: function mount(target, anchor) {
+    			insert_dev(target, div1, anchor);
+    			append_dev(div1, form);
+    			append_dev(form, input0);
+    			set_input_value(input0, /*name*/ ctx[0]);
+    			append_dev(form, t0);
+    			append_dev(form, input1);
+    			set_input_value(input1, /*jobTitle*/ ctx[1]);
+    			append_dev(form, t1);
+    			append_dev(form, input2);
+    			set_input_value(input2, /*userImage*/ ctx[3]);
+    			append_dev(form, t2);
+    			append_dev(form, textarea);
+    			set_input_value(textarea, /*description*/ ctx[2]);
+    			append_dev(form, t3);
+    			append_dev(form, div0);
+    			append_dev(div0, button0);
+    			append_dev(div0, t5);
+    			append_dev(div0, button1);
+    			append_dev(div0, t7);
+    			append_dev(div0, button2);
+    			insert_dev(target, t9, anchor);
+    			if (if_block) if_block.m(target, anchor);
+    			insert_dev(target, t10, anchor);
+
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				if (each_blocks[i]) {
+    					each_blocks[i].m(target, anchor);
+    				}
+    			}
+
+    			insert_dev(target, each_1_anchor, anchor);
+
+    			if (each_1_else) {
+    				each_1_else.m(target, anchor);
+    			}
+
+    			current = true;
+
+    			if (!mounted) {
+    				dispose = [
+    					listen_dev(input0, "input", /*input0_input_handler*/ ctx[9]),
+    					listen_dev(input1, "input", /*input1_input_handler*/ ctx[10]),
+    					listen_dev(input2, "input", /*input2_input_handler*/ ctx[11]),
+    					listen_dev(textarea, "input", /*textarea_input_handler*/ ctx[12]),
+    					listen_dev(button0, "click", prevent_default(/*AddContactCard*/ ctx[6]), false, true, false, false),
+    					listen_dev(button1, "click", /*deleteFirst*/ ctx[7], false, false, false, false),
+    					listen_dev(button2, "click", /*deletelast*/ ctx[8], false, false, false, false)
+    				];
+
+    				mounted = true;
+    			}
+    		},
+    		p: function update(ctx, [dirty]) {
+    			if (dirty & /*name*/ 1 && input0.value !== /*name*/ ctx[0]) {
+    				set_input_value(input0, /*name*/ ctx[0]);
+    			}
+
+    			if (dirty & /*jobTitle*/ 2 && input1.value !== /*jobTitle*/ ctx[1]) {
+    				set_input_value(input1, /*jobTitle*/ ctx[1]);
+    			}
+
+    			if (dirty & /*userImage*/ 8 && input2.value !== /*userImage*/ ctx[3]) {
+    				set_input_value(input2, /*userImage*/ ctx[3]);
+    			}
+
+    			if (dirty & /*description*/ 4) {
+    				set_input_value(textarea, /*description*/ ctx[2]);
+    			}
+
+    			if (current_block_type !== (current_block_type = select_block_type(ctx))) {
+    				if (if_block) if_block.d(1);
+    				if_block = current_block_type && current_block_type(ctx);
+
+    				if (if_block) {
+    					if_block.c();
+    					if_block.m(t10.parentNode, t10);
+    				}
+    			}
+
+    			if (dirty & /*createdContacts*/ 32) {
+    				each_value = /*createdContacts*/ ctx[5];
+    				validate_each_argument(each_value);
+    				group_outros();
+    				validate_each_keys(ctx, each_value, get_each_context, get_key);
+    				each_blocks = update_keyed_each(each_blocks, dirty, get_key, 1, ctx, each_value, each_1_lookup, each_1_anchor.parentNode, outro_and_destroy_block, create_each_block, each_1_anchor, get_each_context);
+    				check_outros();
+
+    				if (!each_value.length && each_1_else) {
+    					each_1_else.p(ctx, dirty);
+    				} else if (!each_value.length) {
+    					each_1_else = create_else_block(ctx);
+    					each_1_else.c();
+    					each_1_else.m(each_1_anchor.parentNode, each_1_anchor);
+    				} else if (each_1_else) {
+    					each_1_else.d(1);
+    					each_1_else = null;
+    				}
+    			}
+    		},
+    		i: function intro(local) {
+    			if (current) return;
+
+    			for (let i = 0; i < each_value.length; i += 1) {
+    				transition_in(each_blocks[i]);
+    			}
+
+    			current = true;
+    		},
+    		o: function outro(local) {
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				transition_out(each_blocks[i]);
+    			}
+
+    			current = false;
+    		},
+    		d: function destroy(detaching) {
+    			if (detaching) detach_dev(div1);
+    			if (detaching) detach_dev(t9);
+
+    			if (if_block) {
+    				if_block.d(detaching);
+    			}
+
+    			if (detaching) detach_dev(t10);
+
+    			for (let i = 0; i < each_blocks.length; i += 1) {
+    				each_blocks[i].d(detaching);
+    			}
+
+    			if (detaching) detach_dev(each_1_anchor);
+    			if (each_1_else) each_1_else.d(detaching);
     			mounted = false;
     			run_all(dispose);
     		}
@@ -851,10 +1248,8 @@ var app = (function () {
     	let description = "";
     	let age = 30;
     	let userImage = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTXaNMAS5II3gRJVIo3iaHoNSIZbsUWWMQ8wx38icmEksXNdThpqibgwkQ4d36BVXuZzyM&usqp=CAU";
-
-    	function incrementAge() {
-    		$$invalidate(3, age++, age);
-    	}
+    	let formState = "empty";
+    	let createdContacts = [];
 
     	function changeName() {
     		$$invalidate(0, name = "Arezoo Moradi");
@@ -863,6 +1258,34 @@ var app = (function () {
     	function inputName(e) {
     		const enteredValue = e.target.value;
     		$$invalidate(0, name = enteredValue);
+    	}
+
+    	function AddContactCard() {
+    		if (name.length === 0 || userImage.length === 0 || jobTitle.length === 0 || description.length === 0) {
+    			$$invalidate(4, formState = "invalid");
+    			return;
+    		}
+
+    		$$invalidate(5, createdContacts = [
+    			...createdContacts,
+    			{
+    				id: Math.random(),
+    				name,
+    				jobTitle,
+    				userImage,
+    				description
+    			}
+    		]);
+
+    		$$invalidate(4, formState = "done");
+    	}
+
+    	function deleteFirst() {
+    		$$invalidate(5, createdContacts = createdContacts.slice(1));
+    	}
+
+    	function deletelast() {
+    		$$invalidate(5, createdContacts = createdContacts.slice(0, -1));
     	}
 
     	const writable_props = [];
@@ -883,7 +1306,7 @@ var app = (function () {
 
     	function input2_input_handler() {
     		userImage = this.value;
-    		$$invalidate(4, userImage);
+    		$$invalidate(3, userImage);
     	}
 
     	function textarea_input_handler() {
@@ -898,9 +1321,13 @@ var app = (function () {
     		description,
     		age,
     		userImage,
-    		incrementAge,
+    		formState,
+    		createdContacts,
     		changeName,
     		inputName,
+    		AddContactCard,
+    		deleteFirst,
+    		deletelast,
     		upperName
     	});
 
@@ -908,9 +1335,11 @@ var app = (function () {
     		if ('name' in $$props) $$invalidate(0, name = $$props.name);
     		if ('jobTitle' in $$props) $$invalidate(1, jobTitle = $$props.jobTitle);
     		if ('description' in $$props) $$invalidate(2, description = $$props.description);
-    		if ('age' in $$props) $$invalidate(3, age = $$props.age);
-    		if ('userImage' in $$props) $$invalidate(4, userImage = $$props.userImage);
-    		if ('upperName' in $$props) $$invalidate(5, upperName = $$props.upperName);
+    		if ('age' in $$props) age = $$props.age;
+    		if ('userImage' in $$props) $$invalidate(3, userImage = $$props.userImage);
+    		if ('formState' in $$props) $$invalidate(4, formState = $$props.formState);
+    		if ('createdContacts' in $$props) $$invalidate(5, createdContacts = $$props.createdContacts);
+    		if ('upperName' in $$props) upperName = $$props.upperName;
     	};
 
     	if ($$props && "$$inject" in $$props) {
@@ -919,17 +1348,17 @@ var app = (function () {
 
     	$$self.$$.update = () => {
     		if ($$self.$$.dirty & /*name*/ 1) {
-    			$$invalidate(5, upperName = name.toUpperCase());
+    			upperName = name.toUpperCase();
     		}
 
     		if ($$self.$$.dirty & /*name*/ 1) {
-    			console.log('%c name', 'background: #FFF; color: #000;padding: 0.25rem;border-radius: 5px', name);
+    			console.log("%c name", "background: #FFF; color: #000;padding: 0.25rem;border-radius: 5px", name);
     		}
 
     		if ($$self.$$.dirty & /*name*/ 1) {
     			if (name === "Arezoo Moradi") {
     				console.log("It run!");
-    				$$invalidate(3, age = 31);
+    				age = 31;
     			}
     		}
     	};
@@ -938,10 +1367,12 @@ var app = (function () {
     		name,
     		jobTitle,
     		description,
-    		age,
     		userImage,
-    		upperName,
-    		incrementAge,
+    		formState,
+    		createdContacts,
+    		AddContactCard,
+    		deleteFirst,
+    		deletelast,
     		input0_input_handler,
     		input1_input_handler,
     		input2_input_handler,

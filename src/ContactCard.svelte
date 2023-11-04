@@ -1,11 +1,27 @@
 <script>
-    export let userName;
-    export let jobTitle;
-    export let description;
-    export let userImage
-    $:console.log("🚀 ~ file: ContactCard.svelte:6 ~ userImage:", userImage)
-
+  export let userName;
+  export let jobTitle;
+  export let description;
+  export let userImage;
+  const initialName = userName;
+  $: console.log("🚀 ~ file: ContactCard.svelte:6 ~ userImage:", userImage);
 </script>
+
+<div class="contact-card">
+  <header>
+    <div class="thumb" class:test={userImage}>
+      <img src={userImage} alt={userName} />
+    </div>
+    <div class="user-data">
+      <h1>{userName} / {initialName}</h1>
+      <h2>{jobTitle}</h2>
+    </div>
+  </header>
+  <div class="description">
+    <p>{@html description}</p>
+  </div>
+</div>
+
 <style>
   .contact-card {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.26);
@@ -58,17 +74,3 @@
     padding: 1rem;
   }
 </style>
-<div class="contact-card">
-  <header>
-    <div class="thumb">
-      <img src="{userImage}" alt="{userName}" />
-    </div>
-    <div class="user-data">
-      <h1>{userName}</h1>
-      <h2>{jobTitle}</h2>
-    </div>
-  </header>
-  <div class="description">
-    <p>{description}</p>
-  </div>
-</div>
