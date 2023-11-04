@@ -1,11 +1,11 @@
 <script>
-	export let name;
+  export let name;
 </script>
 
-<style>
-	h1 {
-		color: purple;
-	}
-</style>
-
 <h1>Hello {name}!</h1>
+
+<style global>
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities;
+</style>
