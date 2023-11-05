@@ -1,8 +1,19 @@
 <script>
-  export let name;
+  import Cart from "./Cart/Cart.svelte";
+  import Products from "./Products/Products.svelte";
+  import Button from "./UI/Button.svelte";
+  import timer from "./timer-store";
+
+  let showCart = false;
 </script>
 
-<h1>Hello {name}!</h1>
+<Button on:click={() => (showCart = !showCart)}>Toggle Cart</Button>
+
+{#if showCart}
+  <Cart />
+{/if}
+<Products />
+<p>timer:{$timer}</p>
 
 <style global>
   @tailwind base;
